@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Orbites 3D - Système solaire</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; color: white; font-family: sans-serif; }
+    canvas { display: block; }
+    #date { position: absolute; top: 10px; left: 10px; font-size: 16px; z-index: 1; }
+    #slider-container { position: absolute; bottom: 10px; left: 10px; z-index: 1; color: white; }
+    #speedSlider, #trailSlider { width: 200px; }
+    .velocity-label { position: absolute; font-size: 12px; background: rgba(0,0,0,0.7); padding: 2px 4px; border-radius: 4px; pointer-events: none; white-space: nowrap; }
+  </style>
+</head>
+<body>
+<div id="date">Date : </div>
+<div id="slider-container">
+  Vitesse : <input type="range" id="speedSlider" min="0.1" max="5" step="0.1" value="1">
+  <span id="speedValue">1.0x</span><br>
+  Longueur traînée : <input type="range" id="trailSlider" min="10" max="2000" step="10" value="1000">
+  <span id="trailValue">1000</span>
+</div>
+<div id="velocities"></div>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@latest/build/three.module.js",
+      "three/examples/jsm/controls/OrbitControls": "https://unpkg.com/three@latest/examples/jsm/controls/OrbitControls.js"
+    }
+  }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+  import { Line2 } from 'https://unpkg.com/three@latest/examples/jsm/lines/Line2.js';
+  import { LineGeometry } from 'https://unpkg.com/three@latest/examples/jsm/lines/LineGeometry.js';
+  import { LineMaterial } from 'https://unpkg.com/three@latest/examples/jsm/lines/LineMaterial.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+  camera.position.set(0, 5, 10);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.enableZoom = true;
+  controls.enablePan = false;
+  controls.target.set(0, 0, 0);
+
+  const sun = new THREE.Mesh(
+          new THREE.SphereGeometry(0.25, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0xffff00 })
+  );
+  scene.add(sun);
+
+  const velocitiesDiv = document.getElementById('velocities');
+  const velocityLabels = {};
+
+  const planetData = {
+    Mercure: { color: 0xaaaaaa, radius: 0.35, period: 88, speed: 47.87, inclination: 7.0 },
+    Venus:   { color: 0xffcc66, radius: 0.7,  period: 225, speed: 35.02, inclination: 3.4 },
+    Terre:   { color: 0x3366ff, radius: 1.0,  period: 365.25, speed: 29.78, inclination: 0.0 },
+    Mars:    { color: 0xff3300, radius: 1.5,  period: 687, speed: 24.07, inclination: 1.85 },
+    Jupiter: { color: 0xff9966, radius: 5.2,  period: 4333, speed: 13.07, inclination: 1.3 },
+    Saturne: { color: 0xffcc99, radius: 9.5,  period: 10759, speed: 9.69, inclination: 2.5 },
+    Uranus:  { color: 0x66ccff, radius: 19.2, period: 30687, speed: 6.81, inclination: 0.8 },
+    Neptune: { color: 0x6666ff, radius: 30.1, period: 60190, speed: 5.43, inclination: 1.8 }
+  };
+
+  const planets = {};
+  const trails = {};
+  const trailHistories = {};
+
+  for (const [name, data] of Object.entries(planetData)) {
+    const mesh = new THREE.Mesh(
+            new THREE.SphereGeometry(0.05, 12, 12),
+            new THREE.MeshBasicMaterial({ color: data.color })
+    );
+    scene.add(mesh);
+    planets[name] = mesh;
+    trailHistories[name] = [];
+    // Version précédente : utilisation de THREE.Line classique
+    const trailGeometry = new THREE.BufferGeometry();
+    const trailMaterial = new THREE.LineBasicMaterial({
+      color: data.color,
+      vertexColors: true,
+      transparent: true,
+      opacity: 1.0
+    });
+    const trail = new THREE.Line(trailGeometry, trailMaterial);
+    trails[name] = trail;
+    scene.add(trail);
+
+    const label = document.createElement('div');
+    label.className = 'velocity-label';
+    document.body.appendChild(label);
+    velocityLabels[name] = label;
+  }
+
+  let t = 0;
+  let speed = 1;
+  let trailLength = 1000;
+  const dateElement = document.getElementById('date');
+  let currentDate = new Date('2005-01-01');
+
+  document.getElementById('speedSlider').addEventListener('input', (e) => {
+    speed = parseFloat(e.target.value);
+    document.getElementById('speedValue').textContent = `${speed.toFixed(1)}x`;
+  });
+
+  document.getElementById('trailSlider').addEventListener('input', (e) => {
+    trailLength = parseInt(e.target.value);
+    document.getElementById('trailValue').textContent = trailLength;
+  });
+
+  function updateTrail(history, trail, position) {
+    history.push(position.clone());
+    if (history.length > trailLength) history.shift();
+    const positions = new Float32Array(history.length * 3);
+    const colors = new Float32Array(history.length * 3);
+    const baseColor = trail.material.color;
+    for (let i = 0; i < history.length; i++) {
+      const alpha = i / history.length;
+      const pos = history[i];
+      positions[i * 3] = pos.x;
+      positions[i * 3 + 1] = pos.y;
+      positions[i * 3 + 2] = pos.z;
+      colors[i * 3] = baseColor.r * alpha;
+      colors[i * 3 + 1] = baseColor.g * alpha;
+      colors[i * 3 + 2] = baseColor.b * alpha;
+    }
+    trail.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    trail.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    trail.geometry.setDrawRange(0, history.length);
+  }
+
+  function updateCameraZoom() {
+    const dist = camera.position.distanceTo(sun.position);
+    camera.fov = THREE.MathUtils.clamp(75 - dist * 0.5, 15, 75);
+    camera.updateProjectionMatrix();
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    t += speed;
+    currentDate.setDate(currentDate.getDate() + speed);
+    dateElement.textContent = `Date : ${currentDate.toISOString().split('T')[0]}`;
+
+    const sunZ = t * 0.02;
+    sun.position.set(0, 0, sunZ);
+    camera.position.z = sunZ + 10;
+    controls.target.copy(sun.position);
+    controls.update();
+    updateCameraZoom();
+
+// Remplace la boucle for (const [name, mesh] ...) par ceci :
+    for (const [name, mesh] of Object.entries(planets)) {
+      const data = planetData[name];
+      const angle = 2 * Math.PI * (t / data.period);
+      // Position dans le plan XY (orbite "plate")
+      let x = Math.cos(angle) * data.radius;
+      let y = Math.sin(angle) * data.radius;
+      let z = 0;
+      // Appliquer l'inclinaison du plan orbital autour de l'axe X
+      const inclinationRad = data.inclination * Math.PI / 180;
+      const yInclined = y * Math.cos(inclinationRad) - z * Math.sin(inclinationRad);
+      const zInclined = y * Math.sin(inclinationRad) + z * Math.cos(inclinationRad);
+      // Décaler le soleil sur l'axe Z
+      mesh.position.set(x, yInclined, sunZ + zInclined);
+      updateTrail(trailHistories[name], trails[name], mesh.position);
+
+      const vector = mesh.position.clone().project(camera);
+      const label = velocityLabels[name];
+      const halfWidth = window.innerWidth / 2;
+      const halfHeight = window.innerHeight / 2;
+      label.style.left = `${vector.x * halfWidth + halfWidth}px`;
+      label.style.top = `${-vector.y * halfHeight + halfHeight}px`;
+      label.textContent = `${name}: ${data.speed.toFixed(2)} km/s`;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+</script>
+</body>
+</html>
